@@ -136,28 +136,47 @@ else:
     <script src="https://unpkg.com/html5-qrcode"></script>
 
     <div id="reader" style="width:100%;"></div>
-    <p id="result"></p>
 
     <script>
     const html5QrCode = new Html5Qrcode("reader");
 
     html5QrCode.start(
-        { facingMode: "environment" },
-        {
-            fps: 10,
-            qrbox: { width: 300, height: 150 }
-        },
-        (decodedText, decodedResult) => {
-            Streamlit.setComponentValue(decodedText);
-            html5QrCode.stop();
-        },
-        (errorMessage) => {}
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 300, height: 150 } },
+      (decodedText, decodedResult) => {
+        window.parent.postMessage(
+          { type: "barcode", value: decodedText },
+          "*"
+        );
+        html5QrCode.stop();
+      },
+      (errorMessage) => {}
     );
     </script>
     """
 
-    codigo_raw = components.html(html_scanner, height=500)
-    codigo = normalize_code(codigo_raw)
+    if "barcode" not in st.session_state:
+        st.session_state.barcode = None
+
+    # Listener para mensajes desde el iframe
+    st.markdown("""
+    <script>
+    window.addEventListener("message", (event) => {
+      if (event.data?.type === "barcode") {
+        window.streamlitWebSocket.send(
+          JSON.stringify({
+            type: "streamlit:setSessionState",
+            key: "barcode",
+            value: event.data.value
+          })
+        );
+      }
+    });
+    </script>
+    """, unsafe_allow_html=True)
+
+    codigo = st.session_state.barcode
+    codigo = normalize_code(codigo)
 
     if codigo:
         st.success(f"✅ Código leído: {codigo}")
