@@ -121,17 +121,22 @@ elif page == "Listado":
     st.dataframe(style_rows(df), width="stretch", height=550)
 
 # --------------------------------------------------
-# ESCANEAR (CÁMARA REAL EN CELULAR)
+# ESCANEAR (CÁMARA + INGRESO MANUAL)
 # --------------------------------------------------
 else:
-    st.title("📷 Escanear activo (Code128)")
+    st.title("📷 Escanear / Ingresar activo")
 
     st.info(
-        "Apunta la cámara al código de barras. "
-        "La cámara trasera se abrirá automáticamente."
+        "Puedes escanear el código con la cámara o ingresarlo manualmente."
     )
 
-    # --- HTML + JS ESTABLE PARA MÓVIL ---
+    # ----------- INPUT MANUAL (FUENTE DE VERDAD) -----------
+    codigo_input = st.text_input(
+        "Código del activo",
+        placeholder="Ej: SLD-001002"
+    )
+
+    # ----------- ESCÁNER HTML (ESCRIBE EN EL INPUT) ----------
     html_scanner = """
     <script src="https://unpkg.com/html5-qrcode"></script>
 
@@ -143,44 +148,27 @@ else:
     html5QrCode.start(
       { facingMode: "environment" },
       { fps: 10, qrbox: { width: 300, height: 150 } },
-      (decodedText, decodedResult) => {
-        window.parent.postMessage(
-          { type: "barcode", value: decodedText },
-          "*"
+      (decodedText) => {
+        const input = window.parent.document.querySelector(
+          'input[placeholder="Ej: SLD-001002"]'
         );
+        if (input) {
+          input.value = decodedText;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
         html5QrCode.stop();
       },
-      (errorMessage) => {}
+      () => {}
     );
     </script>
     """
 
-    if "barcode" not in st.session_state:
-        st.session_state.barcode = None
+    components.html(html_scanner, height=420)
 
-    # Listener para mensajes desde el iframe
-    st.markdown("""
-    <script>
-    window.addEventListener("message", (event) => {
-      if (event.data?.type === "barcode") {
-        window.streamlitWebSocket.send(
-          JSON.stringify({
-            type: "streamlit:setSessionState",
-            key: "barcode",
-            value: event.data.value
-          })
-        );
-      }
-    });
-    </script>
-    """, unsafe_allow_html=True)
+    # ----------- PROCESAR CÓDIGO -----------------------------
+    codigo = normalize_code(codigo_input)
 
-    codigo = st.session_state.barcode
-    codigo = normalize_code(codigo)
-
-    if codigo:
-        st.success(f"✅ Código leído: {codigo}")
-
+    if st.button("🔍 Buscar activo") and codigo:
         asset = get_asset_by_codigo(codigo)
 
         if asset:
