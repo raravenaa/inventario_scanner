@@ -11,6 +11,19 @@ from src.db import (
     invalidate_caches,
 )
 
+import os
+import streamlit.components.v1 as components
+
+COMPONENT_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "components",
+    "barcode_scanner"
+)
+
+barcode_scanner = components.declare_component(
+    "barcode_scanner",
+    path=COMPONENT_PATH
+)
 # --- Barcode scanner component (camera, Code128 via ZXing in browser) ---
 import streamlit.components.v1 as components
 
