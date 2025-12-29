@@ -121,46 +121,54 @@ elif page == "Listado":
     st.dataframe(style_rows(df), width="stretch", height=550)
 
 # --------------------------------------------------
-# ESCANEAR (CÁMARA REAL EN CELULAR)
+# ESCANEAR (CÁMARA + INGRESO MANUAL)
 # --------------------------------------------------
 else:
-    st.title("📷 Escanear activo (Code128)")
+    st.title("📷 Escanear / Ingresar activo")
 
     st.info(
-        "Apunta la cámara al código de barras. "
-        "La cámara trasera se abrirá automáticamente."
+        "Puedes escanear el código con la cámara o ingresarlo manualmente."
     )
 
-    # --- HTML + JS ESTABLE PARA MÓVIL ---
+    # ----------- INPUT MANUAL (FUENTE DE VERDAD) -----------
+    codigo_input = st.text_input(
+        "Código del activo",
+        placeholder="Ej: SLD-001002"
+    )
+
+    # ----------- ESCÁNER HTML (ESCRIBE EN EL INPUT) ----------
     html_scanner = """
     <script src="https://unpkg.com/html5-qrcode"></script>
 
     <div id="reader" style="width:100%;"></div>
-    
+
     <script>
     const html5QrCode = new Html5Qrcode("reader");
-    
+
     html5QrCode.start(
       { facingMode: "environment" },
       { fps: 10, qrbox: { width: 300, height: 150 } },
-      (decodedText, decodedResult) => {
-        window.parent.postMessage(
-          { type: "barcode", value: decodedText },
-          "*"
+      (decodedText) => {
+        const input = window.parent.document.querySelector(
+          'input[placeholder="Ej: SLD-001002"]'
         );
+        if (input) {
+          input.value = decodedText;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
         html5QrCode.stop();
       },
-      (errorMessage) => {}
+      () => {}
     );
     </script>
     """
 
-    codigo_raw = components.html(html_scanner, height=500)
-    codigo = normalize_code(codigo_raw)
+    components.html(html_scanner, height=420)
 
-    if codigo:
-        st.success(f"✅ Código leído: {codigo}")
+    # ----------- PROCESAR CÓDIGO -----------------------------
+    codigo = normalize_code(codigo_input)
 
+    if st.button("🔍 Buscar activo") and codigo:
         asset = get_asset_by_codigo(codigo)
 
         if asset:
