@@ -136,22 +136,21 @@ else:
     <script src="https://unpkg.com/html5-qrcode"></script>
 
     <div id="reader" style="width:100%;"></div>
-    <p id="result"></p>
-
+    
     <script>
     const html5QrCode = new Html5Qrcode("reader");
-
+    
     html5QrCode.start(
-        { facingMode: "environment" },
-        {
-            fps: 10,
-            qrbox: { width: 300, height: 150 }
-        },
-        (decodedText, decodedResult) => {
-            Streamlit.setComponentValue(decodedText);
-            html5QrCode.stop();
-        },
-        (errorMessage) => {}
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 300, height: 150 } },
+      (decodedText, decodedResult) => {
+        window.parent.postMessage(
+          { type: "barcode", value: decodedText },
+          "*"
+        );
+        html5QrCode.stop();
+      },
+      (errorMessage) => {}
     );
     </script>
     """
