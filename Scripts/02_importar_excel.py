@@ -68,6 +68,19 @@ def main(excel_path: str, sheet: str | None = None):
 
     df = df[list(existing.keys())].rename(columns=existing)
 
+    # --- Forzar columnas problemáticas a TEXTO para evitar overflow ---
+    to_text = [
+        "codigo", "codigo_cas", "serie", "ocompra", "modelo", "marca",
+        "responsable", "dependencia", "establecimiento", "unidad", "estado",
+        "tipo_control"
+    ]
+    for c in to_text:
+        if c in df.columns:
+            df[c] = df[c].astype("string").fillna("").str.strip()
+
+    # --- Asegurar código normalizado ---
+    df["codigo"] = df["codigo"].apply(normalize_code)
+
     # Normalize
     df["codigo"] = df["codigo"].apply(normalize_code)
     df = df.dropna(subset=["codigo"]).drop_duplicates(subset=["codigo"])
@@ -85,8 +98,28 @@ def main(excel_path: str, sheet: str | None = None):
     conn = sqlite3.connect(DB_PATH.as_posix())
     cur = conn.cursor()
 
+    # --- Filtrar columnas según esquema real de la tabla assets ---
+    cur.execute("PRAGMA table_info(assets)")
+    db_cols = {row[1] for row in cur.fetchall()}
+
+    keep_cols = [c for c in df.columns if c in db_cols]
+    if "codigo" not in keep_cols:
+        raise ValueError("La tabla assets debe tener la columna 'codigo'.")
+
+    df = df[keep_cols]
+
+    cols = keep_cols
+    placeholders = ",".join(["?"] * len(cols))
+    insert_sql = f"INSERT OR IGNORE INTO assets ({','.join(cols)}) VALUES ({placeholders})"
+
+    for c in df.columns:
+        if pd.api.types.is_integer_dtype(df[c]):
+            # si hay valores > 9e18, convertir a string
+            if df[c].max(skipna=True) > 9_000_000_000_000_000_000:
+                df[c] = df[c].astype("Int64").astype("string")
+
     # Fast import: one transaction
-    rows = [tuple(df.iloc[i][c] for c in cols) for i in range(len(df))]
+    rows = list(df[cols].itertuples(index=False, name=None))
     cur.executemany(insert_sql, rows)
     conn.commit()
 
