@@ -65,10 +65,8 @@ def style_rows(df: pd.DataFrame):
 # SIDEBAR
 # --------------------------------------------------
 st.sidebar.title("📦 Inventario")
-page = st.sidebar.radio(
-    "Menú",
-    ["Escanear", "Listado", "Dashboard"]
-)
+page = st.sidebar.radio("Menú", ["Escanear", "Listado", "Dashboard", "Importar Excel"])
+
 
 # --------------------------------------------------
 # DASHBOARD
@@ -123,6 +121,44 @@ elif page == "Listado":
 # --------------------------------------------------
 # ESCANEAR (CÁMARA + INGRESO MANUAL)
 # --------------------------------------------------
+elif page == "Importar Excel":
+    st.title("📥 Importar Excel a SQLite (Cloud)")
+
+    file = st.file_uploader("Sube tu Excel .xlsx", type=["xlsx"])
+    sheet = st.text_input("Nombre de hoja (opcional)", value="BD AREA SALUD")
+
+    if file and st.button("Importar"):
+        import pandas as pd
+        from src.db import get_conn, init_db_if_missing
+
+        init_db_if_missing()
+        df = pd.read_excel(file, sheet_name=sheet if sheet else None)
+
+        # Ajusta: columna exacta
+        if "Codigo" not in df.columns:
+            st.error("No existe la columna 'Codigo' en el Excel.")
+            st.stop()
+
+        # Normaliza
+        df["Codigo"] = df["Codigo"].astype(str).str.strip().str.upper()
+        df = df.dropna(subset=["Codigo"]).drop_duplicates(subset=["Codigo"])
+
+        # Inserta mínimo (puedes mapear más columnas después)
+        conn = get_conn()
+        rows = []
+        for _, r in df.iterrows():
+            rows.append((r["Codigo"], r.get("Nombre del Bien", None), r.get("Familia", None)))
+
+        conn.executemany(
+            "INSERT OR IGNORE INTO assets (codigo, nombre_bien, familia, verificado, nuevo, creado_en) "
+            "VALUES (?, ?, ?, 0, 0, datetime('now'))",
+            rows
+        )
+        conn.commit()
+
+        st.success(f"Importación OK. Registros procesados: {len(rows)}")
+        invalidate_caches()
+
 else:
     st.title("📷 Escanear / Ingresar activo")
 
