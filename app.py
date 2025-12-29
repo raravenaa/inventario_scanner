@@ -12,12 +12,18 @@ from src.db import (
 )
 from pandas.io.formats.style import Styler
 
-# --- Barcode scanner component (camera, Code128 via ZXing in browser) ---
+import os
 import streamlit.components.v1 as components
+
+COMPONENT_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "components",
+    "barcode_scanner"
+)
 
 barcode_scanner = components.declare_component(
     "barcode_scanner",
-    path="components/barcode_scanner"
+    path=COMPONENT_PATH
 )
 
 # ---------------- UI helpers ----------------
