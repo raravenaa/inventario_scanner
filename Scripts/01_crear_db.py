@@ -46,7 +46,7 @@ def main():
             valor_libro REAL,
 
             verificado INTEGER DEFAULT 0,
-            fecha_verificacion TEXT,
+            fecha_verificacion DATE,
             nuevo INTEGER DEFAULT 0,
             creado_en TEXT
         );
