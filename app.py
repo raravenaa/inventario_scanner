@@ -174,7 +174,7 @@ else:
     codigo_input = st.text_input(
         "Código del activo",
         placeholder="Ej: SLD-001002",
-        value=st.session_state.codigo,
+        value=st.session_state.last_codigo,
         key="codigo_input",
     )
     st.session_state.codigo = codigo_input
