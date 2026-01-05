@@ -162,24 +162,17 @@ elif page == "Importar Excel":
 else:
     st.title("📷 Escanear / Ingresar activo")
 
-    st.info("Escanea el código con la cámara o ingrésalo manualmente. Al detectar un código, se buscará automáticamente.")
-
-    # 1) Inicializar estado
-    if "codigo" not in st.session_state:
-        st.session_state.codigo = ""
-
-    # 2) Input manual (FUENTE DE VERDAD)
-    codigo_input = st.text_input(
-        "Código del activo",
-        placeholder="Ej: SLD-001002",
-        value=st.session_state.codigo,
-        key="codigo_input",
+    st.info(
+        "Puedes escanear el código con la cámara o ingresarlo manualmente."
     )
 
-    # Mantener sincronizado session_state
-    st.session_state.codigo = codigo_input
+    # ----------- INPUT MANUAL (FUENTE DE VERDAD) -----------
+    codigo_input = st.text_input(
+        "Código del activo",
+        placeholder="Ej: SLD-001002"
+    )
 
-    # 3) Escáner HTML (rellena el input)
+    # ----------- ESCÁNER HTML (ESCRIBE EN EL INPUT) ----------
     html_scanner = """
     <script src="https://unpkg.com/html5-qrcode"></script>
 
@@ -205,35 +198,20 @@ else:
     );
     </script>
     """
+
     components.html(html_scanner, height=420)
 
-    # 4) Normalizar código y buscar automáticamente
-    codigo = normalize_code(st.session_state.codigo)
+    # ----------- PROCESAR CÓDIGO -----------------------------
+    codigo = normalize_code(codigo_input)
 
-    # Botones de apoyo
-    c1, c2 = st.columns([1, 1])
-    with c1:
-        if st.button("🔄 Limpiar código"):
-            st.session_state.codigo = ""
-            st.rerun()
-
-    with c2:
-        # opcional: permite forzar búsqueda manual si quieres
-        buscar_manual = st.button("🔍 Buscar ahora")
-
-    # 5) Autosearch: si hay código, busca (sin botón)
-    # Para evitar re-búsqueda infinita, solo buscamos si:
-    # - hay código
-    # - o el usuario apretó buscar
-    if codigo and (buscar_manual or True):
+    if st.button("🔍 Buscar activo") and codigo:
         asset = get_asset_by_codigo(codigo)
 
         if asset:
             render_asset_detail(asset)
 
-            # ✅ Verificar
             if st.button("✅ Marcar como verificado", type="primary"):
-                mark_verified_by_codigo(codigo)  # (si luego agregas usuario, te muestro cómo pasar verificado_por)
+                mark_verified_by_codigo(codigo)
                 invalidate_caches()
                 st.success("Activo verificado correctamente")
                 st.rerun()
@@ -262,5 +240,4 @@ else:
                     })
                     invalidate_caches()
                     st.success("Nuevo activo agregado correctamente")
-                    st.session_state.codigo = ""  # opcional: limpiar después de guardar
                     st.rerun()
