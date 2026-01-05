@@ -119,7 +119,7 @@ elif page == "Listado":
     st.dataframe(style_rows(df), width="stretch", height=550)
 
 # --------------------------------------------------
-# IMPORTAR (OJO: tu bloque actual es SQLite)
+# ESCANEAR (CÁMARA + INGRESO MANUAL)
 # --------------------------------------------------
 elif page == "Importar Excel":
     st.title("📥 Importar Excel a SQLite (Cloud)")
@@ -134,13 +134,16 @@ elif page == "Importar Excel":
         init_db_if_missing()
         df = pd.read_excel(file, sheet_name=sheet if sheet else None)
 
+        # Ajusta: columna exacta
         if "Codigo" not in df.columns:
             st.error("No existe la columna 'Codigo' en el Excel.")
             st.stop()
 
+        # Normaliza
         df["Codigo"] = df["Codigo"].astype(str).str.strip().str.upper()
         df = df.dropna(subset=["Codigo"]).drop_duplicates(subset=["Codigo"])
 
+        # Inserta mínimo (puedes mapear más columnas después)
         conn = get_conn()
         rows = []
         for _, r in df.iterrows():
@@ -156,60 +159,27 @@ elif page == "Importar Excel":
         st.success(f"Importación OK. Registros procesados: {len(rows)}")
         invalidate_caches()
 
-# --------------------------------------------------
-# ESCANEAR (CÁMARA + AUTO BÚSQUEDA + VERIFICAR)
-# --------------------------------------------------
 else:
     st.title("📷 Escanear / Ingresar activo")
 
     st.info("Escanea el código con la cámara o ingrésalo manualmente. Al detectar un código, se buscará automáticamente.")
 
-    # Estado base
+    # 1) Inicializar estado
     if "codigo" not in st.session_state:
         st.session_state.codigo = ""
-    if "last_codigo" not in st.session_state:
-        st.session_state.last_codigo = ""
 
-    # Input manual (fuente de verdad)
+    # 2) Input manual (FUENTE DE VERDAD)
     codigo_input = st.text_input(
         "Código del activo",
         placeholder="Ej: SLD-001002",
-        value=st.session_state.last_codigo,
+        value=st.session_state.codigo,
         key="codigo_input",
     )
+
+    # Mantener sincronizado session_state
     st.session_state.codigo = codigo_input
 
-    # Script: asignar id fijo al input por label (robusto en móvil)
-    components.html(
-        """
-        <script>
-        function ensureInputId() {
-          const labels = Array.from(window.parent.document.querySelectorAll('label'));
-          const target = labels.find(l => (l.innerText || '').trim() === 'Código del activo');
-          if (!target) return false;
-
-          const container = target.closest('div');
-          if (!container) return false;
-
-          const input = container.querySelector('input');
-          if (!input) return false;
-
-          input.id = 'codigo_activo_input';
-          return true;
-        }
-
-        let tries = 0;
-        const timer = setInterval(() => {
-          tries++;
-          const ok = ensureInputId();
-          if (ok || tries > 30) clearInterval(timer);
-        }, 200);
-        </script>
-        """,
-        height=0,
-    )
-
-    # Escáner HTML (escribe en input por ID)
+    # 3) Escáner HTML (rellena el input)
     html_scanner = """
     <script src="https://unpkg.com/html5-qrcode"></script>
 
@@ -222,7 +192,9 @@ else:
       { facingMode: "environment" },
       { fps: 10, qrbox: { width: 300, height: 150 } },
       (decodedText) => {
-        const input = window.parent.document.getElementById('codigo_activo_input');
+        const input = window.parent.document.querySelector(
+          'input[placeholder="Ej: SLD-001002"]'
+        );
         if (input) {
           input.value = decodedText;
           input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -235,64 +207,60 @@ else:
     """
     components.html(html_scanner, height=420)
 
-    # Normalizar código
+    # 4) Normalizar código y buscar automáticamente
     codigo = normalize_code(st.session_state.codigo)
 
-    # Botones
+    # Botones de apoyo
     c1, c2 = st.columns([1, 1])
     with c1:
         if st.button("🔄 Limpiar código"):
             st.session_state.codigo = ""
-            st.session_state.last_codigo = ""
             st.rerun()
 
     with c2:
+        # opcional: permite forzar búsqueda manual si quieres
         buscar_manual = st.button("🔍 Buscar ahora")
 
-    # Buscar solo cuando cambie el código o sea manual
-    codigo_cambio = bool(codigo) and (codigo != st.session_state.last_codigo)
+    # 5) Autosearch: si hay código, busca (sin botón)
+    # Para evitar re-búsqueda infinita, solo buscamos si:
+    # - hay código
+    # - o el usuario apretó buscar
+    if codigo and (buscar_manual or True):
+        asset = get_asset_by_codigo(codigo)
 
-    if buscar_manual or codigo_cambio:
-        if codigo:
-            st.session_state.last_codigo = codigo
+        if asset:
+            render_asset_detail(asset)
 
-            asset = get_asset_by_codigo(codigo)
+            # ✅ Verificar
+            if st.button("✅ Marcar como verificado", type="primary"):
+                mark_verified_by_codigo(codigo)  # (si luego agregas usuario, te muestro cómo pasar verificado_por)
+                invalidate_caches()
+                st.success("Activo verificado correctamente")
+                st.rerun()
 
-            if asset:
-                render_asset_detail(asset)
+        else:
+            st.warning("⚠️ Código NO existe en la base de datos")
 
-                if st.button("✅ Marcar como verificado", type="primary"):
-                    mark_verified_by_codigo(codigo)
+            with st.form("nuevo_activo"):
+                st.subheader("➕ Agregar nuevo activo")
+
+                st.text_input("Código", value=codigo, disabled=True)
+                nombre = st.text_input("Nombre del Bien")
+                familia = st.text_input("Familia")
+                responsable = st.text_input("Responsable")
+                establecimiento = st.text_input("Establecimiento")
+
+                guardar = st.form_submit_button("💾 Guardar")
+
+                if guardar:
+                    insert_new_asset({
+                        "codigo": codigo,
+                        "nombre_bien": nombre,
+                        "familia": familia,
+                        "responsable": responsable,
+                        "establecimiento": establecimiento
+                    })
                     invalidate_caches()
-                    st.success("Activo verificado correctamente")
-                    st.session_state.codigo = ""
-                    st.session_state.last_codigo = ""
+                    st.success("Nuevo activo agregado correctamente")
+                    st.session_state.codigo = ""  # opcional: limpiar después de guardar
                     st.rerun()
-
-            else:
-                st.warning("⚠️ Código NO existe en la base de datos")
-
-                with st.form("nuevo_activo"):
-                    st.subheader("➕ Agregar nuevo activo")
-
-                    st.text_input("Código", value=codigo, disabled=True)
-                    nombre = st.text_input("Nombre del Bien")
-                    familia = st.text_input("Familia")
-                    responsable = st.text_input("Responsable")
-                    establecimiento = st.text_input("Establecimiento")
-
-                    guardar = st.form_submit_button("💾 Guardar")
-
-                    if guardar:
-                        insert_new_asset({
-                            "codigo": codigo,
-                            "nombre_bien": nombre,
-                            "familia": familia,
-                            "responsable": responsable,
-                            "establecimiento": establecimiento
-                        })
-                        invalidate_caches()
-                        st.success("Nuevo activo agregado correctamente")
-                        st.session_state.codigo = ""
-                        st.session_state.last_codigo = ""
-                        st.rerun()
