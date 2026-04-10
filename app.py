@@ -36,6 +36,7 @@ LISTADO_FILTER_DEFAULTS = {
 
 SCAN_STATE_DEFAULTS = {
     "scan_code_input": "",
+    "scan_buffer_code": "",
     "scan_last_code": "",
     "scan_asset": None,
     "scan_not_found": False,
@@ -101,12 +102,14 @@ def ensure_scan_state():
 
 
 def set_scan_result(code: str, asset: dict | None):
+    st.session_state["scan_buffer_code"] = code
     st.session_state["scan_last_code"] = code
     st.session_state["scan_asset"] = asset
     st.session_state["scan_not_found"] = asset is None and bool(code)
 
 
 def clear_scan_result(clear_input: bool = False):
+    st.session_state["scan_buffer_code"] = ""
     st.session_state["scan_last_code"] = ""
     st.session_state["scan_asset"] = None
     st.session_state["scan_not_found"] = False
@@ -470,6 +473,8 @@ def render_scan_page():
     components.html(html_scanner, height=420)
 
     codigo = normalize_code(codigo_input)
+    if codigo:
+        st.session_state["scan_buffer_code"] = codigo
 
     action1, action2 = st.columns([2, 1])
     with action1:
@@ -482,11 +487,15 @@ def render_scan_page():
         st.rerun()
 
     if buscar:
-        if not codigo:
+        search_code = codigo or normalize_code(st.session_state.get("scan_buffer_code", ""))
+        if search_code and st.session_state.get("scan_code_input") != search_code:
+            st.session_state["scan_code_input"] = search_code
+
+        if not search_code:
             st.warning("Ingresa o escanea un codigo antes de buscar.")
         else:
-            asset = get_asset_by_codigo(codigo)
-            set_scan_result(codigo, asset)
+            asset = get_asset_by_codigo(search_code)
+            set_scan_result(search_code, asset)
 
     current_code = st.session_state.get("scan_last_code", "")
     current_asset = st.session_state.get("scan_asset")
