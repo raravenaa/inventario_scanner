@@ -1,10 +1,27 @@
 from __future__ import annotations
 
-from datetime import date
 import pandas as pd
-import streamlit as st
 import psycopg2
+import streamlit as st
 from psycopg2.extras import RealDictCursor
+
+
+LIST_ASSET_COLUMNS = [
+    "codigo",
+    "nombre_bien",
+    "familia",
+    "responsable",
+    "dependencia",
+    "establecimiento",
+    "estado",
+    "en_uso",
+    "tipo_control",
+    "ocompra",
+    "descripcion",
+    "verificado",
+    "fecha_verificacion",
+    "nuevo",
+]
 
 
 def normalize_code(code: str) -> str:
@@ -12,15 +29,10 @@ def normalize_code(code: str) -> str:
 
 
 def _get_pg_config() -> dict:
-    """
-    Lee secretos Opción B desde st.secrets.
-    Debes tener:
-      PG_HOST, PG_PORT, PG_DB, PG_USER, PG_PASSWORD, PG_SSLMODE
-    """
     required = ["PG_HOST", "PG_PORT", "PG_DB", "PG_USER", "PG_PASSWORD", "PG_SSLMODE"]
-    missing = [k for k in required if k not in st.secrets]
+    missing = [key for key in required if key not in st.secrets]
     if missing:
-        raise RuntimeError(f"Faltan secrets: {missing}. Configúralos en Streamlit Cloud > Secrets.")
+        raise RuntimeError(f"Faltan secrets: {missing}. Configuralos en Streamlit Cloud > Secrets.")
 
     return {
         "host": st.secrets["PG_HOST"],
@@ -32,124 +44,29 @@ def _get_pg_config() -> dict:
     }
 
 
-@st.cache_resource
 def get_conn():
     """
-    Conexión única (cache_resource) para la sesión del proceso Streamlit.
+    Crea una conexion nueva por operacion para evitar snapshots viejos
+    o conexiones persistentes desalineadas con la base remota.
     """
-    cfg = _get_pg_config()
-    conn = psycopg2.connect(**cfg, cursor_factory=RealDictCursor)
-    conn.autocommit = False
-    return conn
+    return psycopg2.connect(
+        **_get_pg_config(),
+    )
 
 
 def init_db_if_missing():
-    """
-    En Supabase ya tienes la tabla creada. Dejamos esto como no-op.
-    Si quieres, podríamos verificar existencia, pero no es necesario.
-    """
     return
 
 
 def invalidate_caches():
-    # Clears cached list/stats; connection stays cached
     get_stats.clear()
+    count_assets.clear()
     list_assets.clear()
 
 
-@st.cache_data(show_spinner=False, ttl=5)
-def get_stats() -> dict:
-    conn = get_conn()
-    with conn.cursor() as cur:
-        cur.execute("SELECT COUNT(*) AS c FROM public.assets")
-        total = cur.fetchone()["c"]
-
-        cur.execute("SELECT COUNT(*) AS c FROM public.assets WHERE verificado = TRUE")
-        verificados = cur.fetchone()["c"]
-
-        cur.execute("SELECT COUNT(*) AS c FROM public.assets WHERE nuevo = TRUE")
-        nuevos = cur.fetchone()["c"]
-
-    return {"total": total, "verificados": verificados, "nuevos": nuevos}
-
-
-def get_asset_by_codigo(codigo: str) -> dict | None:
-    conn = get_conn()
-    codigo = normalize_code(codigo)
-    with conn.cursor() as cur:
-        cur.execute("SELECT * FROM public.assets WHERE codigo = %s", (codigo,))
-        row = cur.fetchone()
-    return dict(row) if row else None
-
-
-def mark_verified_by_codigo(codigo: str, verificado_por: str | None = None):
-    """
-    Marca como verificado con fecha_verificacion = CURRENT_DATE y nuevo = FALSE.
-    verificado_por es opcional (si luego agregas login).
-    """
-    conn = get_conn()
-    codigo = normalize_code(codigo)
-
-    with conn.cursor() as cur:
-        if verificado_por:
-            cur.execute(
-                """
-                UPDATE public.assets
-                SET verificado = TRUE,
-                    fecha_verificacion = CURRENT_DATE,
-                    nuevo = FALSE,
-                    verificado_por = %s
-                WHERE codigo = %s
-                """,
-                (verificado_por, codigo),
-            )
-        else:
-            cur.execute(
-                """
-                UPDATE public.assets
-                SET verificado = TRUE,
-                    fecha_verificacion = CURRENT_DATE,
-                    nuevo = FALSE
-                WHERE codigo = %s
-                """,
-                (codigo,),
-            )
-    conn.commit()
-
-
-def insert_new_asset(data: dict):
-    """
-    Inserción mínima para activos nuevos.
-    En tu esquema: fecha es DATE (puede quedar NULL), creado_en se setea con NOW().
-    """
-    conn = get_conn()
-    codigo = normalize_code(data.get("codigo", ""))
-
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO public.assets
-            (codigo, nombre_bien, familia, responsable, establecimiento, verificado, nuevo, creado_en)
-            VALUES (%s, %s, %s, %s, %s, FALSE, TRUE, NOW())
-            ON CONFLICT (codigo) DO NOTHING
-            """,
-            (
-                codigo,
-                data.get("nombre_bien"),
-                data.get("familia"),
-                data.get("responsable"),
-                data.get("establecimiento"),
-            ),
-        )
-    conn.commit()
-
-
-@st.cache_data(show_spinner=False, ttl=10)
-def list_assets(filtro: dict) -> pd.DataFrame:
-    conn = get_conn()
+def build_assets_where(filtro: dict) -> tuple[str, list]:
     show_only = filtro.get("show_only", "Todos")
     query = (filtro.get("query") or "").strip()
-    limit = int(filtro.get("limit") or 2000)
 
     where = []
     params: list = []
@@ -167,24 +84,210 @@ def list_assets(filtro: dict) -> pd.DataFrame:
         params.extend([q, q])
 
     where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    return where_sql, params
 
-    sql = f"""
-        SELECT codigo, nombre_bien, familia, responsable, establecimiento,
-               verificado, fecha_verificacion, nuevo
-        FROM public.assets
-        {where_sql}
-        ORDER BY nuevo DESC, verificado DESC, codigo ASC
-        LIMIT %s
-    """
-    params.append(limit)
 
-    df = pd.read_sql_query(sql, conn, params=params)
+@st.cache_data(show_spinner=False, ttl=5)
+def get_stats() -> dict:
+    conn = get_conn()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT COUNT(*) AS c FROM public.assets")
+            total = cur.fetchone()["c"]
 
-    # Para que tu style_rows siga funcionando sin tocar app.py:
-    # convierte bool -> int (0/1)
-    if "verificado" in df.columns:
-        df["verificado"] = df["verificado"].fillna(False).astype(bool).astype(int)
-    if "nuevo" in df.columns:
-        df["nuevo"] = df["nuevo"].fillna(False).astype(bool).astype(int)
+            cur.execute("SELECT COUNT(*) AS c FROM public.assets WHERE verificado = TRUE")
+            verificados = cur.fetchone()["c"]
 
-    return df
+            cur.execute("SELECT COUNT(*) AS c FROM public.assets WHERE nuevo = TRUE")
+            nuevos = cur.fetchone()["c"]
+        return {"total": total, "verificados": verificados, "nuevos": nuevos}
+    finally:
+        conn.close()
+
+
+@st.cache_data(show_spinner=False, ttl=10)
+def count_assets(filtro: dict) -> int:
+    conn = get_conn()
+    try:
+        where_sql, params = build_assets_where(filtro)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(f"SELECT COUNT(*) AS c FROM public.assets{where_sql}", params)
+            return cur.fetchone()["c"]
+    finally:
+        conn.close()
+
+
+def get_asset_by_codigo(codigo: str) -> dict | None:
+    conn = get_conn()
+    try:
+        codigo = normalize_code(codigo)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM public.assets WHERE codigo = %s", (codigo,))
+            row = cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def mark_verified_by_codigo(codigo: str, verificado_por: str | None = None):
+    conn = get_conn()
+    try:
+        codigo = normalize_code(codigo)
+        with conn.cursor() as cur:
+            if verificado_por:
+                cur.execute(
+                    """
+                    UPDATE public.assets
+                    SET verificado = TRUE,
+                        fecha_verificacion = CURRENT_DATE,
+                        nuevo = FALSE,
+                        verificado_por = %s
+                    WHERE codigo = %s
+                    """,
+                    (verificado_por, codigo),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE public.assets
+                    SET verificado = TRUE,
+                        fecha_verificacion = CURRENT_DATE,
+                        nuevo = FALSE
+                    WHERE codigo = %s
+                    """,
+                    (codigo,),
+                )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def insert_new_asset(data: dict):
+    conn = get_conn()
+    try:
+        codigo = normalize_code(data.get("codigo", ""))
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO public.assets
+                (
+                    codigo, nombre_bien, familia, responsable, dependencia,
+                    establecimiento, estado, en_uso, tipo_control, ocompra,
+                    descripcion, verificado, nuevo, creado_en
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, FALSE, TRUE, NOW()
+                )
+                ON CONFLICT (codigo) DO NOTHING
+                """,
+                (
+                    codigo,
+                    data.get("nombre_bien"),
+                    data.get("familia"),
+                    data.get("responsable"),
+                    data.get("dependencia"),
+                    data.get("establecimiento"),
+                    data.get("estado"),
+                    data.get("en_uso"),
+                    data.get("tipo_control"),
+                    data.get("ocompra"),
+                    data.get("descripcion"),
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@st.cache_data(show_spinner=False, ttl=10)
+def list_assets(filtro: dict) -> pd.DataFrame:
+    conn = get_conn()
+    try:
+        limit = max(50, min(int(filtro.get("limit") or 500), 20000))
+        offset = max(0, int(filtro.get("offset") or 0))
+        where_sql, params = build_assets_where(filtro)
+        select_sql = ", ".join(LIST_ASSET_COLUMNS)
+
+        sql = f"""
+            SELECT {select_sql}
+            FROM public.assets
+            {where_sql}
+            ORDER BY nuevo DESC, verificado DESC, codigo ASC
+            LIMIT %s
+            OFFSET %s
+        """
+        params.extend([limit, offset])
+
+        df = pd.read_sql_query(sql, conn, params=params)
+
+        for column in LIST_ASSET_COLUMNS:
+            if column not in df.columns:
+                df[column] = None
+
+        if "verificado" in df.columns:
+            df["verificado"] = df["verificado"].fillna(False).astype(bool).astype(int)
+        if "nuevo" in df.columns:
+            df["nuevo"] = df["nuevo"].fillna(False).astype(bool).astype(int)
+
+        return df[LIST_ASSET_COLUMNS]
+    finally:
+        conn.close()
+
+
+def update_assets_bulk(changes: list[dict]) -> int:
+    if not changes:
+        return 0
+
+    allowed = {
+        "nombre_bien",
+        "subfamilia",
+        "familia",
+        "denominacion",
+        "cuenta_contable",
+        "marca",
+        "modelo",
+        "serie",
+        "descripcion",
+        "origen",
+        "responsable",
+        "dependencia",
+        "establecimiento",
+        "unidad",
+        "estado",
+        "en_uso",
+        "tipo_control",
+        "ocompra",
+    }
+
+    conn = get_conn()
+    try:
+        updated = 0
+        with conn.cursor() as cur:
+            for item in changes:
+                codigo = normalize_code(item.get("codigo", ""))
+                if not codigo:
+                    continue
+
+                sets = []
+                params = []
+                for key, value in item.items():
+                    if key in allowed:
+                        sets.append(f"{key} = %s")
+                        params.append(value)
+
+                if not sets:
+                    continue
+
+                params.append(codigo)
+                cur.execute(
+                    f"UPDATE public.assets SET {', '.join(sets)} WHERE codigo = %s",
+                    params,
+                )
+                updated += cur.rowcount
+
+        conn.commit()
+        return updated
+    finally:
+        conn.close()
