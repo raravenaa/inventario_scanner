@@ -1,5 +1,7 @@
 let controls = null;
 let active = false;
+let videoTrack = null;
+let torchOn = false;
 
 const Streamlit = window.Streamlit || {
   setComponentReady: () => {
@@ -40,6 +42,7 @@ const Streamlit = window.Streamlit || {
 const lastEl = document.getElementById("last");
 const errorEl = document.getElementById("error");
 const videoEl = document.getElementById("video");
+const torchButton = document.getElementById("btnTorch");
 
 function setHeight() {
   Streamlit.setFrameHeight(520);
@@ -53,6 +56,64 @@ function setStatus(message, isError = false) {
 
   lastEl.textContent = message;
   errorEl.textContent = "";
+}
+
+function resetTorchButton() {
+  torchOn = false;
+  videoTrack = null;
+  torchButton.disabled = true;
+  torchButton.textContent = "Linterna";
+}
+
+function getActiveVideoTrack() {
+  const stream = videoEl.srcObject;
+  if (!stream || !stream.getVideoTracks) return null;
+
+  const tracks = stream.getVideoTracks();
+  return tracks.length > 0 ? tracks[0] : null;
+}
+
+function setupTorchButton() {
+  videoTrack = getActiveVideoTrack();
+  const capabilities = videoTrack && videoTrack.getCapabilities
+    ? videoTrack.getCapabilities()
+    : {};
+
+  if (!videoTrack || !("torch" in capabilities)) {
+    resetTorchButton();
+    setStatus("Camara abierta. Linterna no disponible en este navegador.");
+    return;
+  }
+
+  torchButton.disabled = false;
+  torchButton.textContent = "Encender linterna";
+}
+
+async function setTorch(enabled) {
+  if (!videoTrack || !videoTrack.applyConstraints) {
+    throw new Error("La camara no permite controlar la linterna.");
+  }
+
+  await videoTrack.applyConstraints({
+    advanced: [{ torch: enabled }]
+  });
+  torchOn = enabled;
+  torchButton.textContent = enabled ? "Apagar linterna" : "Encender linterna";
+}
+
+async function toggleTorch() {
+  if (!videoTrack) {
+    setStatus("Abre la camara antes de usar la linterna.", true);
+    return;
+  }
+
+  try {
+    await setTorch(!torchOn);
+  } catch (e) {
+    console.error("Error controlando linterna:", e);
+    const detail = e && e.message ? ` Detalle: ${e.message}` : "";
+    setStatus(`No se pudo controlar la linterna.${detail}`, true);
+  }
 }
 
 async function startScanner() {
@@ -84,7 +145,10 @@ async function startScanner() {
         stopScanner();
       }
     );
-    setStatus("Camara abierta. Apunta al codigo.");
+    setupTorchButton();
+    if (!torchButton.disabled) {
+      setStatus("Camara abierta. Apunta al codigo.");
+    }
   } catch (e) {
     console.error("Error iniciando camara:", e);
     const detail = e && e.message ? ` Detalle: ${e.message}` : "";
@@ -97,11 +161,17 @@ function stopScanner() {
   active = false;
 
   try {
+    if (videoTrack && torchOn) {
+      videoTrack
+        .applyConstraints({ advanced: [{ torch: false }] })
+        .catch((e) => console.error("Error apagando linterna:", e));
+    }
     if (controls) {
       controls.stop();
       controls = null;
     }
     videoEl.srcObject = null;
+    resetTorchButton();
     setStatus("");
   } catch (e) {
     console.error(e);
@@ -110,6 +180,7 @@ function stopScanner() {
 
 document.getElementById("btnStart").addEventListener("click", startScanner);
 document.getElementById("btnStop").addEventListener("click", stopScanner);
+torchButton.addEventListener("click", toggleTorch);
 
 Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, setHeight);
 Streamlit.setComponentReady();
