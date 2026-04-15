@@ -1,8 +1,9 @@
-let codeReader = null;
+let controls = null;
 let active = false;
 
 const lastEl = document.getElementById("last");
 const errorEl = document.getElementById("error");
+const videoEl = document.getElementById("video");
 
 function setHeight() {
   Streamlit.setFrameHeight(520);
@@ -23,31 +24,31 @@ async function startScanner() {
   active = true;
 
   try {
-    if (!window.ZXing || !window.ZXing.BrowserMultiFormatReader) {
+    if (!window.ZXingBrowser || !window.ZXingBrowser.BrowserMultiFormatReader) {
       throw new Error("No se cargo la libreria de escaneo.");
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error("El navegador no permite acceso a camara en este contexto.");
     }
 
     setStatus("Abriendo camara...");
-    codeReader = new ZXing.BrowserMultiFormatReader();
-
-    const constraints = {
-      video: {
-        facingMode: { ideal: "environment" }
-      }
-    };
-
-    await codeReader.decodeFromConstraints(
-      constraints,
-      "video",
+    const codeReader = new ZXingBrowser.BrowserMultiFormatReader();
+    controls = await codeReader.decodeFromConstraints(
+      {
+        video: { facingMode: { ideal: "environment" } },
+        audio: false
+      },
+      videoEl,
       (result) => {
-        if (result) {
-          const text = result.getText ? result.getText() : result.text;
-          setStatus(text);
-          Streamlit.setComponentValue(text);
-          stopScanner();
-        }
+        if (!result) return;
+
+        const text = result.getText ? result.getText() : result.text;
+        setStatus(text);
+        Streamlit.setComponentValue(text);
+        stopScanner();
       }
     );
+    setStatus("Camara abierta. Apunta al codigo.");
   } catch (e) {
     console.error("Error iniciando camara:", e);
     const detail = e && e.message ? ` Detalle: ${e.message}` : "";
@@ -60,10 +61,11 @@ function stopScanner() {
   active = false;
 
   try {
-    if (codeReader) {
-      codeReader.reset();
-      codeReader = null;
+    if (controls) {
+      controls.stop();
+      controls = null;
     }
+    videoEl.srcObject = null;
     setStatus("");
   } catch (e) {
     console.error(e);
