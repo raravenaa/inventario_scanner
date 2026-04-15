@@ -8,7 +8,7 @@ from src.db import (
     count_assets,
     get_asset_by_codigo,
     get_conn,
-    get_stats,
+    get_dashboard_data,
     init_db_if_missing,
     insert_new_asset,
     invalidate_caches,
@@ -319,12 +319,137 @@ def render_listado_page():
 def render_dashboard_page():
     st.title("Dashboard")
 
-    stats = get_stats()
-    c1, c2, c3 = st.columns(3)
+    dashboard = get_dashboard_data()
+    stats = dashboard["stats"]
 
-    c1.metric("Total activos", stats["total"])
-    c2.metric("Verificados", stats["verificados"])
-    c3.metric("Nuevos", stats["nuevos"])
+    total = int(stats.get("total") or 0)
+    verificados = int(stats.get("verificados") or 0)
+    pendientes = int(stats.get("pendientes") or 0)
+    nuevos = int(stats.get("nuevos") or 0)
+    verificados_hoy = int(stats.get("verificados_hoy") or 0)
+    verificados_7d = int(stats.get("verificados_7d") or 0)
+    avance = (verificados / total) if total else 0
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total activos", f"{total:,}".replace(",", "."))
+    c2.metric("Verificados", f"{verificados:,}".replace(",", "."))
+    c3.metric("Pendientes", f"{pendientes:,}".replace(",", "."))
+    c4.metric("Nuevos", f"{nuevos:,}".replace(",", "."))
+
+    st.progress(avance, text=f"Avance de verificacion: {avance:.1%}")
+
+    a1, a2 = st.columns(2)
+    a1.metric("Verificados hoy", f"{verificados_hoy:,}".replace(",", "."))
+    a2.metric("Verificados ultimos 7 dias", f"{verificados_7d:,}".replace(",", "."))
+
+    chart1, chart2 = st.columns(2)
+    with chart1:
+        st.subheader("Verificacion")
+        st.vega_lite_chart(
+            dashboard["verification"],
+            {
+                "mark": {"type": "arc", "innerRadius": 45},
+                "encoding": {
+                    "theta": {"field": "cantidad", "type": "quantitative"},
+                    "color": {
+                        "field": "categoria",
+                        "type": "nominal",
+                        "scale": {"range": ["#2e7d32", "#c62828"]},
+                    },
+                    "tooltip": [
+                        {"field": "categoria", "type": "nominal"},
+                        {"field": "cantidad", "type": "quantitative"},
+                    ],
+                },
+            },
+            use_container_width=True,
+        )
+
+    with chart2:
+        st.subheader("Origen de registros")
+        st.vega_lite_chart(
+            dashboard["origin"],
+            {
+                "mark": {"type": "arc", "innerRadius": 45},
+                "encoding": {
+                    "theta": {"field": "cantidad", "type": "quantitative"},
+                    "color": {
+                        "field": "categoria",
+                        "type": "nominal",
+                        "scale": {"range": ["#1565c0", "#f9a825"]},
+                    },
+                    "tooltip": [
+                        {"field": "categoria", "type": "nominal"},
+                        {"field": "cantidad", "type": "quantitative"},
+                    ],
+                },
+            },
+            use_container_width=True,
+        )
+
+    st.subheader("Trabajo por establecimiento")
+    by_establecimiento = dashboard["by_establecimiento"]
+    if by_establecimiento.empty:
+        st.info("No hay datos por establecimiento.")
+    else:
+        chart_df = by_establecimiento.melt(
+            id_vars=["establecimiento"],
+            value_vars=["verificados", "pendientes", "nuevos"],
+            var_name="categoria",
+            value_name="cantidad",
+        )
+        st.vega_lite_chart(
+            chart_df,
+            {
+                "mark": "bar",
+                "encoding": {
+                    "y": {
+                        "field": "establecimiento",
+                        "type": "nominal",
+                        "sort": "-x",
+                        "title": "Establecimiento",
+                    },
+                    "x": {"field": "cantidad", "type": "quantitative", "title": "Activos"},
+                    "color": {
+                        "field": "categoria",
+                        "type": "nominal",
+                        "scale": {"range": ["#2e7d32", "#c62828", "#f9a825"]},
+                    },
+                    "tooltip": [
+                        {"field": "establecimiento", "type": "nominal"},
+                        {"field": "categoria", "type": "nominal"},
+                        {"field": "cantidad", "type": "quantitative"},
+                    ],
+                },
+            },
+            use_container_width=True,
+        )
+
+    lower1, lower2 = st.columns(2)
+    with lower1:
+        st.subheader("Activos por estado")
+        by_estado = dashboard["by_estado"]
+        if by_estado.empty:
+            st.info("No hay datos por estado.")
+        else:
+            st.bar_chart(
+                by_estado.set_index("estado")["total"],
+                height=320,
+            )
+
+    with lower2:
+        st.subheader("Verificaciones por fecha")
+        daily_verified = dashboard["daily_verified"]
+        if daily_verified.empty:
+            st.info("Todavia no hay verificaciones con fecha.")
+        else:
+            st.line_chart(
+                daily_verified.set_index("fecha")["verificados"],
+                height=320,
+            )
+
+    with st.expander("Ver tabla resumen por establecimiento"):
+        st.dataframe(by_establecimiento, width="stretch", hide_index=True)
 
 
 def render_import_page():

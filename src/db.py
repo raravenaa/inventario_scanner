@@ -60,6 +60,7 @@ def init_db_if_missing():
 
 def invalidate_caches():
     get_stats.clear()
+    get_dashboard_data.clear()
     count_assets.clear()
     list_assets.clear()
 
@@ -92,15 +93,102 @@ def get_stats() -> dict:
     conn = get_conn()
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT COUNT(*) AS c FROM public.assets")
-            total = cur.fetchone()["c"]
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    COUNT(*) FILTER (WHERE COALESCE(verificado, FALSE)) AS verificados,
+                    COUNT(*) FILTER (WHERE NOT COALESCE(verificado, FALSE)) AS pendientes,
+                    COUNT(*) FILTER (WHERE COALESCE(nuevo, FALSE)) AS nuevos,
+                    COUNT(*) FILTER (
+                        WHERE COALESCE(nuevo, FALSE)
+                          AND NOT COALESCE(verificado, FALSE)
+                    ) AS nuevos_pendientes,
+                    COUNT(*) FILTER (
+                        WHERE fecha_verificacion = (NOW() AT TIME ZONE 'America/Santiago')::date
+                    ) AS verificados_hoy,
+                    COUNT(*) FILTER (
+                        WHERE fecha_verificacion >= (NOW() AT TIME ZONE 'America/Santiago')::date - INTERVAL '7 days'
+                    ) AS verificados_7d
+                FROM public.assets
+                """
+            )
+            row = cur.fetchone()
+        return dict(row)
+    finally:
+        conn.close()
 
-            cur.execute("SELECT COUNT(*) AS c FROM public.assets WHERE verificado = TRUE")
-            verificados = cur.fetchone()["c"]
 
-            cur.execute("SELECT COUNT(*) AS c FROM public.assets WHERE nuevo = TRUE")
-            nuevos = cur.fetchone()["c"]
-        return {"total": total, "verificados": verificados, "nuevos": nuevos}
+@st.cache_data(show_spinner=False, ttl=10)
+def get_dashboard_data() -> dict[str, pd.DataFrame | dict]:
+    conn = get_conn()
+    try:
+        stats = get_stats()
+
+        verification_df = pd.DataFrame(
+            [
+                {"categoria": "Verificados", "cantidad": int(stats.get("verificados") or 0)},
+                {"categoria": "Pendientes", "cantidad": int(stats.get("pendientes") or 0)},
+            ]
+        )
+        origin_df = pd.DataFrame(
+            [
+                {"categoria": "Activos existentes", "cantidad": int((stats.get("total") or 0) - (stats.get("nuevos") or 0))},
+                {"categoria": "Nuevos", "cantidad": int(stats.get("nuevos") or 0)},
+            ]
+        )
+
+        by_establecimiento = pd.read_sql_query(
+            """
+            SELECT
+                COALESCE(NULLIF(TRIM(establecimiento), ''), 'Sin establecimiento') AS establecimiento,
+                COUNT(*)::int AS total,
+                COUNT(*) FILTER (WHERE COALESCE(verificado, FALSE))::int AS verificados,
+                COUNT(*) FILTER (WHERE NOT COALESCE(verificado, FALSE))::int AS pendientes,
+                COUNT(*) FILTER (WHERE COALESCE(nuevo, FALSE))::int AS nuevos
+            FROM public.assets
+            GROUP BY 1
+            ORDER BY total DESC, establecimiento ASC
+            LIMIT 15
+            """,
+            conn,
+        )
+
+        by_estado = pd.read_sql_query(
+            """
+            SELECT
+                COALESCE(NULLIF(TRIM(estado), ''), 'Sin estado') AS estado,
+                COUNT(*)::int AS total
+            FROM public.assets
+            GROUP BY 1
+            ORDER BY total DESC, estado ASC
+            LIMIT 12
+            """,
+            conn,
+        )
+
+        daily_verified = pd.read_sql_query(
+            """
+            SELECT
+                fecha_verificacion::date AS fecha,
+                COUNT(*)::int AS verificados
+            FROM public.assets
+            WHERE fecha_verificacion IS NOT NULL
+            GROUP BY 1
+            ORDER BY 1 DESC
+            LIMIT 30
+            """,
+            conn,
+        ).sort_values("fecha")
+
+        return {
+            "stats": stats,
+            "verification": verification_df,
+            "origin": origin_df,
+            "by_establecimiento": by_establecimiento,
+            "by_estado": by_estado,
+            "daily_verified": daily_verified,
+        }
     finally:
         conn.close()
 
