@@ -40,6 +40,7 @@ SCAN_STATE_DEFAULTS = {
     "scan_last_code": "",
     "scan_asset": None,
     "scan_not_found": False,
+    "scan_component_version": 0,
 }
 
 
@@ -115,6 +116,17 @@ def clear_scan_result(clear_input: bool = False):
     st.session_state["scan_not_found"] = False
     if clear_input:
         st.session_state["scan_code_input"] = ""
+
+
+def sync_scan_input_to_buffer():
+    code = normalize_code(st.session_state.get("scan_code_input", ""))
+    if code:
+        st.session_state["scan_buffer_code"] = code
+
+
+def restart_scanner():
+    clear_scan_result(clear_input=True)
+    st.session_state["scan_component_version"] += 1
 
 
 def values_equal(old_value, new_value) -> bool:
@@ -443,6 +455,7 @@ def render_scan_page():
         "Codigo del activo",
         placeholder="Ej: SLD-001002",
         key="scan_code_input",
+        on_change=sync_scan_input_to_buffer,
     )
 
     html_scanner = """
@@ -452,6 +465,10 @@ def render_scan_page():
 
     <script>
     const html5QrCode = new Html5Qrcode("reader");
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    ).set;
 
     html5QrCode.start(
       { facingMode: "environment" },
@@ -461,8 +478,10 @@ def render_scan_page():
           'input[placeholder="Ej: SLD-001002"]'
         );
         if (input) {
-          input.value = decodedText;
-          input.dispatchEvent(new Event('input', { bubbles: true }));
+          nativeInputValueSetter.call(input, decodedText);
+          input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: decodedText }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+          input.dispatchEvent(new Event('blur', { bubbles: true }));
         }
         html5QrCode.stop();
       },
@@ -470,26 +489,34 @@ def render_scan_page():
     );
     </script>
     """
-    components.html(html_scanner, height=420)
+    components.html(
+        html_scanner,
+        height=420,
+        key=f"barcode_scanner_{st.session_state['scan_component_version']}",
+    )
 
     codigo = normalize_code(codigo_input)
     if codigo:
         st.session_state["scan_buffer_code"] = codigo
 
-    action1, action2 = st.columns([2, 1])
+    action1, action2, action3 = st.columns([2, 1, 1])
     with action1:
         buscar = st.button("Buscar activo", type="primary", use_container_width=True)
     with action2:
         limpiar = st.button("Limpiar", use_container_width=True)
+    with action3:
+        escanear_nuevamente = st.button("Escanear nuevamente", use_container_width=True)
 
     if limpiar:
         clear_scan_result(clear_input=True)
         st.rerun()
 
+    if escanear_nuevamente:
+        restart_scanner()
+        st.rerun()
+
     if buscar:
         search_code = codigo or normalize_code(st.session_state.get("scan_buffer_code", ""))
-        if search_code and st.session_state.get("scan_code_input") != search_code:
-            st.session_state["scan_code_input"] = search_code
 
         if not search_code:
             st.warning("Ingresa o escanea un codigo antes de buscar.")
