@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -38,10 +40,18 @@ SCAN_STATE_DEFAULTS = {
     "scan_code_input": "",
     "scan_buffer_code": "",
     "scan_last_code": "",
+    "scan_last_component_code": "",
     "scan_asset": None,
     "scan_not_found": False,
     "scan_component_version": 0,
+    "scan_input_version": 0,
 }
+
+BASE_DIR = Path(__file__).parent
+barcode_scanner = components.declare_component(
+    "barcode_scanner",
+    path=str(BASE_DIR / "components" / "barcode_scanner"),
+)
 
 
 st.set_page_config(
@@ -112,21 +122,22 @@ def set_scan_result(code: str, asset: dict | None):
 def clear_scan_result(clear_input: bool = False):
     st.session_state["scan_buffer_code"] = ""
     st.session_state["scan_last_code"] = ""
+    st.session_state["scan_last_component_code"] = ""
     st.session_state["scan_asset"] = None
     st.session_state["scan_not_found"] = False
     if clear_input:
-        st.session_state["scan_code_input"] = ""
+        st.session_state["scan_input_version"] += 1
+        st.session_state["scan_component_version"] += 1
 
 
-def sync_scan_input_to_buffer():
-    code = normalize_code(st.session_state.get("scan_code_input", ""))
+def sync_scan_input_to_buffer(input_key: str):
+    code = normalize_code(st.session_state.get(input_key, ""))
     if code:
         st.session_state["scan_buffer_code"] = code
 
 
 def restart_scanner():
     clear_scan_result(clear_input=True)
-    st.session_state["scan_component_version"] += 1
 
 
 def values_equal(old_value, new_value) -> bool:
@@ -451,50 +462,30 @@ def render_scan_page():
 
     ensure_scan_state()
 
+    input_key = f"scan_code_input_{st.session_state['scan_input_version']}"
     codigo_input = st.text_input(
         "Codigo del activo",
+        value=st.session_state.get("scan_buffer_code", ""),
         placeholder="Ej: SLD-001002",
-        key="scan_code_input",
+        key=input_key,
         on_change=sync_scan_input_to_buffer,
+        args=(input_key,),
     )
 
     scanner_version = st.session_state["scan_component_version"]
-    html_scanner = """
-    <!-- scanner-version:SCAN_COMPONENT_VERSION -->
-    <script src="https://unpkg.com/html5-qrcode"></script>
-
-    <div id="reader" style="width:100%;"></div>
-
-    <script>
-    const html5QrCode = new Html5Qrcode("reader");
-    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype,
-      "value"
-    ).set;
-
-    html5QrCode.start(
-      { facingMode: "environment" },
-      { fps: 10, qrbox: { width: 300, height: 150 } },
-      (decodedText) => {
-        const input = window.parent.document.querySelector(
-          'input[placeholder="Ej: SLD-001002"]'
-        );
-        if (input) {
-          nativeInputValueSetter.call(input, decodedText);
-          input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: decodedText }));
-          input.dispatchEvent(new Event('change', { bubbles: true }));
-          input.dispatchEvent(new Event('blur', { bubbles: true }));
-        }
-        html5QrCode.stop();
-      },
-      () => {}
-    );
-    </script>
-    """.replace("SCAN_COMPONENT_VERSION", str(scanner_version))
-    components.html(
-        html_scanner,
-        height=420,
+    scanned_value = barcode_scanner(
+        key=f"barcode_scanner_{scanner_version}",
+        default="",
     )
+    scanned_code = normalize_code(scanned_value)
+    if (
+        scanned_code
+        and scanned_code != st.session_state.get("scan_last_component_code", "")
+    ):
+        st.session_state["scan_buffer_code"] = scanned_code
+        st.session_state["scan_last_component_code"] = scanned_code
+        st.session_state["scan_input_version"] += 1
+        st.rerun()
 
     codigo = normalize_code(codigo_input)
     if codigo:

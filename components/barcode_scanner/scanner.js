@@ -1,5 +1,4 @@
 let codeReader = null;
-let stream = null;
 let active = false;
 
 function setHeight() {
@@ -13,30 +12,27 @@ async function startScanner() {
   try {
     codeReader = new ZXing.BrowserMultiFormatReader();
 
-    // 🔑 FORZAR CÁMARA TRASERA
     const constraints = {
       video: {
-        facingMode: { exact: "environment" }
+        facingMode: { ideal: "environment" }
       }
     };
 
     await codeReader.decodeFromConstraints(
       constraints,
       "video",
-      (result, err) => {
+      (result) => {
         if (result) {
-          const text = result.getText
-            ? result.getText()
-            : result.text;
-
+          const text = result.getText ? result.getText() : result.text;
+          document.getElementById("last").textContent = text;
           Streamlit.setComponentValue(text);
           stopScanner();
         }
       }
     );
   } catch (e) {
-    console.error("Error iniciando cámara:", e);
-    alert("No se pudo acceder a la cámara. Revisa permisos del navegador.");
+    console.error("Error iniciando camara:", e);
+    alert("No se pudo acceder a la camara. Revisa permisos del navegador.");
     active = false;
   }
 }
