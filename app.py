@@ -476,7 +476,7 @@ def render_scan_page():
     scanned_value = barcode_scanner(
         key=f"barcode_scanner_{scanner_version}",
         default="",
-        height=520,
+        height=660,
     )
     scanned_code = normalize_code(scanned_value)
     if (

@@ -4,15 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Barcode Scanner</title>
-    <script src="https://unpkg.com/@zxing/browser@0.1.5"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <style>
-      html, body { min-height: 520px; }
+      html, body { min-height: 660px; }
       body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; padding: 0; margin: 0; }
       .wrap { padding: 12px; }
-      video { width: 100%; min-height: 260px; border-radius: 8px; background: #111; display: block; }
-      .row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
-      button { flex: 1 1 120px; padding: 10px 12px; border-radius: 8px; border: 1px solid #ccc; background: white; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      button { min-height: 42px; padding: 10px 12px; border-radius: 8px; border: 1px solid #ccc; background: white; }
       button:disabled { opacity: 0.55; }
+      #btnTorch { grid-column: 1 / -1; }
+      #reader { width: 100%; min-height: 390px; margin-top: 12px; overflow: hidden; border-radius: 8px; background: #111; }
+      #reader video { width: 100% !important; border-radius: 8px; }
       .hint { margin-top: 10px; font-size: 12px; color: #666; }
       .code { margin-top: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas; }
       .error { color: #b00020; }
@@ -20,16 +22,16 @@
   </head>
   <body>
     <div class="wrap">
-      <video id="video" autoplay playsinline muted></video>
       <div class="row">
         <button id="btnStart">Iniciar camara</button>
         <button id="btnStop">Detener</button>
-        <button id="btnTorch" disabled>Linterna</button>
+        <button id="btnTorch" disabled>Linterna no disponible</button>
       </div>
-      <div class="hint">Consejo: acerca/aleja hasta que enfoque. Buena luz mejora la lectura.</div>
+      <div id="reader"></div>
+      <div class="hint">Consejo: usa buena luz y centra el codigo de barras en horizontal.</div>
       <div class="code" id="last"></div>
       <div class="hint error" id="error"></div>
     </div>
-    <script src="./scanner.js?v=6"></script>
+    <script src="./scanner.js?v=7"></script>
   </body>
 </html>
