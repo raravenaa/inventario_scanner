@@ -1,6 +1,42 @@
 let controls = null;
 let active = false;
 
+const Streamlit = window.Streamlit || {
+  setComponentReady: () => {
+    window.parent.postMessage(
+      { isStreamlitMessage: true, type: "streamlit:componentReady", apiVersion: 1 },
+      "*"
+    );
+  },
+  setFrameHeight: (height) => {
+    window.parent.postMessage(
+      { isStreamlitMessage: true, type: "streamlit:setFrameHeight", height },
+      "*"
+    );
+  },
+  setComponentValue: (value) => {
+    window.parent.postMessage(
+      {
+        isStreamlitMessage: true,
+        type: "streamlit:setComponentValue",
+        value,
+        dataType: "json"
+      },
+      "*"
+    );
+  },
+  RENDER_EVENT: "streamlit:render",
+  events: {
+    addEventListener: (type, callback) => {
+      window.addEventListener("message", (event) => {
+        if (event.data && event.data.type === type) {
+          callback(event);
+        }
+      });
+    }
+  }
+};
+
 const lastEl = document.getElementById("last");
 const errorEl = document.getElementById("error");
 const videoEl = document.getElementById("video");
