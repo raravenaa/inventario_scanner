@@ -1,8 +1,21 @@
 let codeReader = null;
 let active = false;
 
+const lastEl = document.getElementById("last");
+const errorEl = document.getElementById("error");
+
 function setHeight() {
   Streamlit.setFrameHeight(520);
+}
+
+function setStatus(message, isError = false) {
+  if (isError) {
+    errorEl.textContent = message;
+    return;
+  }
+
+  lastEl.textContent = message;
+  errorEl.textContent = "";
 }
 
 async function startScanner() {
@@ -10,6 +23,11 @@ async function startScanner() {
   active = true;
 
   try {
+    if (!window.ZXing || !window.ZXing.BrowserMultiFormatReader) {
+      throw new Error("No se cargo la libreria de escaneo.");
+    }
+
+    setStatus("Abriendo camara...");
     codeReader = new ZXing.BrowserMultiFormatReader();
 
     const constraints = {
@@ -24,7 +42,7 @@ async function startScanner() {
       (result) => {
         if (result) {
           const text = result.getText ? result.getText() : result.text;
-          document.getElementById("last").textContent = text;
+          setStatus(text);
           Streamlit.setComponentValue(text);
           stopScanner();
         }
@@ -32,7 +50,8 @@ async function startScanner() {
     );
   } catch (e) {
     console.error("Error iniciando camara:", e);
-    alert("No se pudo acceder a la camara. Revisa permisos del navegador.");
+    const detail = e && e.message ? ` Detalle: ${e.message}` : "";
+    setStatus(`No se pudo acceder a la camara. Revisa permisos del navegador.${detail}`, true);
     active = false;
   }
 }
@@ -45,6 +64,7 @@ function stopScanner() {
       codeReader.reset();
       codeReader = null;
     }
+    setStatus("");
   } catch (e) {
     console.error(e);
   }
