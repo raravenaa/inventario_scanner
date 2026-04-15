@@ -458,7 +458,9 @@ def render_scan_page():
         on_change=sync_scan_input_to_buffer,
     )
 
+    scanner_version = st.session_state["scan_component_version"]
     html_scanner = """
+    <!-- scanner-version:SCAN_COMPONENT_VERSION -->
     <script src="https://unpkg.com/html5-qrcode"></script>
 
     <div id="reader" style="width:100%;"></div>
@@ -488,11 +490,10 @@ def render_scan_page():
       () => {}
     );
     </script>
-    """
+    """.replace("SCAN_COMPONENT_VERSION", str(scanner_version))
     components.html(
         html_scanner,
         height=420,
-        key=f"barcode_scanner_{st.session_state['scan_component_version']}",
     )
 
     codigo = normalize_code(codigo_input)
