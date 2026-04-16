@@ -19,6 +19,9 @@ from src.db import (
 
 
 EDITABLE_COLUMNS = [
+    "marca",
+    "modelo",
+    "serie",
     "responsable",
     "dependencia",
     "establecimiento",
