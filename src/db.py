@@ -22,6 +22,8 @@ LIST_ASSET_COLUMNS = [
     "fecha_verificacion",
     "nuevo",
     "marca",
+    "modelo",
+    "serie",
 ]
 
 
