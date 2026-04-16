@@ -1,4 +1,5 @@
 from pathlib import Path
+from io import BytesIO
 
 import pandas as pd
 import streamlit as st
@@ -6,6 +7,7 @@ import streamlit.components.v1 as components
 
 from src.db import (
     count_assets,
+    export_assets,
     get_asset_by_codigo,
     get_conn,
     get_dashboard_data,
@@ -192,6 +194,25 @@ def collect_asset_changes(
             changes.append(item)
 
     return changes
+
+
+def dataframe_to_excel_bytes(df: pd.DataFrame) -> bytes:
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="activos")
+        worksheet = writer.sheets["activos"]
+        worksheet.freeze_panes = "A2"
+
+        for column_cells in worksheet.columns:
+            header = column_cells[0].value
+            if header is None:
+                continue
+
+            values = [str(cell.value) for cell in column_cells[:200] if cell.value is not None]
+            width = min(max([len(str(header)), *[len(value) for value in values]]) + 2, 45)
+            worksheet.column_dimensions[column_cells[0].column_letter].width = width
+
+    return output.getvalue()
 
 
 def render_listado_page():
@@ -584,6 +605,63 @@ def render_import_page():
         invalidate_caches()
 
 
+def render_export_page():
+    st.title("Exportar base de datos")
+    st.info("Descarga los activos en formato Excel para respaldo o revision externa.")
+
+    filtro_actual = get_listado_filter()
+    usar_filtro = st.checkbox(
+        "Exportar usando los filtros actuales del listado",
+        value=False,
+        help="Si esta activo, se respetan el estado y la busqueda configurados en Listado.",
+    )
+
+    filtro_export = filtro_actual if usar_filtro else {"show_only": "Todos", "query": ""}
+
+    if usar_filtro:
+        st.caption(
+            "Filtro aplicado: "
+            f"{filtro_export.get('show_only', 'Todos')} | "
+            f"Busqueda: {filtro_export.get('query') or 'sin busqueda'}"
+        )
+    else:
+        st.caption("Exportacion completa de la tabla de activos.")
+
+    export_signature = f"{filtro_export.get('show_only', 'Todos')}|{filtro_export.get('query', '')}"
+    if st.session_state.get("export_signature") != export_signature:
+        st.session_state["export_ready"] = False
+        st.session_state["export_signature"] = export_signature
+
+    if st.button("Preparar archivo Excel", type="primary"):
+        invalidate_caches()
+        st.session_state["export_ready"] = True
+
+    if not st.session_state.get("export_ready"):
+        return
+
+    with st.spinner("Preparando archivo..."):
+        df_export = export_assets(filtro_export)
+        excel_bytes = dataframe_to_excel_bytes(df_export)
+
+    st.success(f"Archivo listo. Registros incluidos: {len(df_export)}")
+
+    if not df_export.empty:
+        st.dataframe(df_export.head(50), width="stretch", hide_index=True)
+        st.caption("Vista previa: primeras 50 filas.")
+    else:
+        st.warning("No hay registros para exportar con el filtro seleccionado.")
+
+    filename = pd.Timestamp.now(tz="America/Santiago").strftime("inventario_%Y%m%d_%H%M.xlsx")
+    st.download_button(
+        "Descargar Excel",
+        data=excel_bytes,
+        file_name=filename,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        disabled=df_export.empty,
+    )
+
+
 def render_scan_page():
     st.title("Escanear / Ingresar activo")
     st.info("Puedes escanear el codigo con la camara o ingresarlo manualmente.")
@@ -716,12 +794,14 @@ def render_scan_page():
 
 
 st.sidebar.title("Inventario")
-page = st.sidebar.radio("Menu", ["Escanear", "Listado", "Dashboard", "Importar Excel"])
+page = st.sidebar.radio("Menu", ["Escanear", "Listado", "Dashboard", "Exportar Excel", "Importar Excel"])
 
 if page == "Dashboard":
     render_dashboard_page()
 elif page == "Listado":
     render_listado_page()
+elif page == "Exportar Excel":
+    render_export_page()
 elif page == "Importar Excel":
     render_import_page()
 else:

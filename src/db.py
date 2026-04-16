@@ -66,6 +66,7 @@ def invalidate_caches():
     get_dashboard_data.clear()
     count_assets.clear()
     list_assets.clear()
+    export_assets.clear()
 
 
 def build_assets_where(filtro: dict) -> tuple[str, list]:
@@ -321,6 +322,37 @@ def list_assets(filtro: dict) -> pd.DataFrame:
             df["verificado"] = df["verificado"].fillna(False).astype(bool).astype(int)
         if "nuevo" in df.columns:
             df["nuevo"] = df["nuevo"].fillna(False).astype(bool).astype(int)
+
+        return df[LIST_ASSET_COLUMNS]
+    finally:
+        conn.close()
+
+
+@st.cache_data(show_spinner=False, ttl=30)
+def export_assets(filtro: dict | None = None) -> pd.DataFrame:
+    conn = get_conn()
+    try:
+        filtro = filtro or {"show_only": "Todos", "query": ""}
+        where_sql, params = build_assets_where(filtro)
+        select_sql = ", ".join(LIST_ASSET_COLUMNS)
+
+        sql = f"""
+            SELECT {select_sql}
+            FROM public.assets
+            {where_sql}
+            ORDER BY codigo ASC
+        """
+
+        df = pd.read_sql_query(sql, conn, params=params)
+
+        for column in LIST_ASSET_COLUMNS:
+            if column not in df.columns:
+                df[column] = None
+
+        if "verificado" in df.columns:
+            df["verificado"] = df["verificado"].fillna(False).astype(bool)
+        if "nuevo" in df.columns:
+            df["nuevo"] = df["nuevo"].fillna(False).astype(bool)
 
         return df[LIST_ASSET_COLUMNS]
     finally:
