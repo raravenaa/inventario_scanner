@@ -11,6 +11,7 @@ from src.db import (
     get_asset_by_codigo,
     get_conn,
     get_dashboard_data,
+    get_reference_values,
     init_db_if_missing,
     insert_new_asset,
     invalidate_caches,
@@ -143,6 +144,91 @@ def sync_scan_input_to_buffer(input_key: str):
 
 def restart_scanner():
     clear_scan_result(clear_input=True)
+
+
+def clean_text(value) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
+def reference_input(
+    label: str,
+    field: str,
+    current_value: str = "",
+    key_prefix: str = "",
+    filters: dict | None = None,
+) -> str:
+    current_value = clean_text(current_value)
+    options = get_reference_values(field, filters)
+    choice_options = [""] + options + ["Agregar/modificar..."]
+
+    if current_value and current_value not in options:
+        choice_options.insert(1, current_value)
+
+    default_index = choice_options.index(current_value) if current_value in choice_options else 0
+    choice = st.selectbox(
+        label,
+        choice_options,
+        index=default_index,
+        format_func=lambda value: "Sin valor" if value == "" else value,
+        key=f"{key_prefix}_{field}_select",
+    )
+
+    if choice == "Agregar/modificar...":
+        return st.text_input(
+            f"{label} nuevo/modificado",
+            value=current_value,
+            key=f"{key_prefix}_{field}_custom",
+        ).strip()
+
+    return choice
+
+
+def build_scan_edit_data(asset: dict, key_prefix: str) -> dict:
+    establecimiento = reference_input(
+        "Establecimiento",
+        "establecimiento",
+        asset.get("establecimiento", ""),
+        key_prefix,
+    )
+    dependencia = reference_input(
+        "Dependencia",
+        "dependencia",
+        asset.get("dependencia", ""),
+        key_prefix,
+        filters={"establecimiento": establecimiento},
+    )
+    estado = reference_input(
+        "Estado",
+        "estado",
+        asset.get("estado", ""),
+        key_prefix,
+    )
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        marca = reference_input("Marca", "marca", asset.get("marca", ""), key_prefix)
+    with col2:
+        modelo = reference_input("Modelo", "modelo", asset.get("modelo", ""), key_prefix)
+    with col3:
+        serie = reference_input("Serie", "serie", asset.get("serie", ""), key_prefix)
+
+    descripcion = st.text_area(
+        "Descripcion",
+        value=clean_text(asset.get("descripcion", "")),
+        key=f"{key_prefix}_descripcion",
+    ).strip()
+
+    return {
+        "establecimiento": establecimiento,
+        "dependencia": dependencia,
+        "estado": estado,
+        "marca": marca,
+        "modelo": modelo,
+        "serie": serie,
+        "descripcion": descripcion,
+    }
 
 
 def values_equal(old_value, new_value) -> bool:
@@ -750,47 +836,64 @@ def render_scan_page():
             else:
                 st.info("No se realizaron cambios en el activo.")
 
-    elif not_found and current_code:
-        st.warning(f"El codigo {current_code} no existe en la base de datos.")
+        with st.expander("Modificar datos del activo", expanded=False):
+            st.caption("Puedes elegir valores existentes o usar Agregar/modificar para escribir uno nuevo.")
+            scan_edit_data = build_scan_edit_data(current_asset, f"scan_edit_{current_code}")
 
-        with st.form("nuevo_activo"):
-            st.subheader("Registrar nuevo activo")
-
-            st.text_input("Codigo", value=current_code, disabled=True)
-            nombre = st.text_input("Nombre del Bien")
-            familia = st.text_input("Familia")
-            responsable = st.text_input("Responsable")
-            dependencia = st.text_input("Dependencia")
-            establecimiento = st.text_input("Establecimiento")
-            estado = st.text_input("Estado")
-            en_uso = st.text_input("En uso")
-            tipo_control = st.text_input("Tipo control")
-            ocompra = st.text_input("OCompra")
-            descripcion = st.text_area("Descripcion")
-
-            guardar = st.form_submit_button("Guardar nuevo activo")
-
-            if guardar:
-                insert_new_asset(
-                    {
-                        "codigo": current_code,
-                        "nombre_bien": nombre,
-                        "familia": familia,
-                        "responsable": responsable,
-                        "dependencia": dependencia,
-                        "establecimiento": establecimiento,
-                        "estado": estado,
-                        "en_uso": en_uso,
-                        "tipo_control": tipo_control,
-                        "ocompra": ocompra,
-                        "descripcion": descripcion,
-                    }
-                )
+            if st.button("Guardar modificaciones", type="primary", use_container_width=True):
+                update_payload = {"codigo": current_code, **scan_edit_data}
+                updated_rows = update_assets_bulk([update_payload])
                 invalidate_caches()
                 refreshed_asset = get_asset_by_codigo(current_code)
                 set_scan_result(current_code, refreshed_asset)
-                st.success("Nuevo activo agregado correctamente.")
+                st.success(f"Modificaciones guardadas. Filas actualizadas: {updated_rows}")
                 st.rerun()
+
+    elif not_found and current_code:
+        st.warning(f"El codigo {current_code} no existe en la base de datos.")
+
+        st.subheader("Registrar nuevo activo")
+        st.caption("Puedes elegir valores existentes o usar Agregar/modificar para escribir uno nuevo.")
+
+        st.text_input("Codigo", value=current_code, disabled=True)
+        nombre = st.text_input("Nombre del Bien", key=f"new_{current_code}_nombre")
+        familia = st.text_input("Familia", key=f"new_{current_code}_familia")
+        responsable = st.text_input("Responsable", key=f"new_{current_code}_responsable")
+
+        new_reference_data = build_scan_edit_data({}, f"scan_new_{current_code}")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            en_uso = st.text_input("En uso", key=f"new_{current_code}_en_uso")
+        with col2:
+            tipo_control = st.text_input("Tipo control", key=f"new_{current_code}_tipo_control")
+        with col3:
+            ocompra = st.text_input("OCompra", key=f"new_{current_code}_ocompra")
+
+        if st.button("Guardar nuevo activo", type="primary", use_container_width=True):
+            insert_new_asset(
+                {
+                    "codigo": current_code,
+                    "nombre_bien": nombre,
+                    "familia": familia,
+                    "responsable": responsable,
+                    "dependencia": new_reference_data["dependencia"],
+                    "establecimiento": new_reference_data["establecimiento"],
+                    "estado": new_reference_data["estado"],
+                    "en_uso": en_uso,
+                    "tipo_control": tipo_control,
+                    "ocompra": ocompra,
+                    "descripcion": new_reference_data["descripcion"],
+                    "marca": new_reference_data["marca"],
+                    "modelo": new_reference_data["modelo"],
+                    "serie": new_reference_data["serie"],
+                }
+            )
+            invalidate_caches()
+            refreshed_asset = get_asset_by_codigo(current_code)
+            set_scan_result(current_code, refreshed_asset)
+            st.success("Nuevo activo agregado correctamente.")
+            st.rerun()
 
 
 st.sidebar.title("Inventario")

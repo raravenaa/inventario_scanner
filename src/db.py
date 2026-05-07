@@ -67,6 +67,7 @@ def invalidate_caches():
     count_assets.clear()
     list_assets.clear()
     export_assets.clear()
+    get_reference_values.clear()
 
 
 def build_assets_where(filtro: dict) -> tuple[str, list]:
@@ -221,6 +222,50 @@ def get_asset_by_codigo(codigo: str) -> dict | None:
         conn.close()
 
 
+@st.cache_data(show_spinner=False, ttl=30)
+def get_reference_values(field: str, filters: dict | None = None) -> list[str]:
+    allowed = {
+        "establecimiento",
+        "dependencia",
+        "estado",
+        "marca",
+        "modelo",
+        "serie",
+    }
+    if field not in allowed:
+        raise ValueError(f"Campo de referencia no permitido: {field}")
+
+    filters = filters or {}
+    where = [f"{field} IS NOT NULL", f"TRIM({field}) <> ''"]
+    params = []
+
+    for filter_field, filter_value in filters.items():
+        if filter_field not in allowed:
+            continue
+        value = (filter_value or "").strip()
+        if not value:
+            continue
+        where.append(f"{filter_field} = %s")
+        params.append(value)
+
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT DISTINCT TRIM({field}) AS value
+                FROM public.assets
+                WHERE {" AND ".join(where)}
+                ORDER BY value ASC
+                """,
+                params,
+            )
+            rows = cur.fetchall()
+        return [row[0] for row in rows if row and row[0]]
+    finally:
+        conn.close()
+
+
 def mark_verified_by_codigo(codigo: str, verificado_por: str | None = None):
     conn = get_conn()
     try:
@@ -265,12 +310,12 @@ def insert_new_asset(data: dict):
                 (
                     codigo, nombre_bien, familia, responsable, dependencia,
                     establecimiento, estado, en_uso, tipo_control, ocompra,
-                    descripcion, verificado, nuevo, creado_en
+                    descripcion, marca, modelo, serie, verificado, nuevo, creado_en
                 )
                 VALUES (
                     %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s,
-                    %s, FALSE, TRUE, NOW()
+                    %s, %s, %s, %s, FALSE, TRUE, NOW()
                 )
                 ON CONFLICT (codigo) DO NOTHING
                 """,
@@ -286,6 +331,9 @@ def insert_new_asset(data: dict):
                     data.get("tipo_control"),
                     data.get("ocompra"),
                     data.get("descripcion"),
+                    data.get("marca"),
+                    data.get("modelo"),
+                    data.get("serie"),
                 ),
             )
         conn.commit()
